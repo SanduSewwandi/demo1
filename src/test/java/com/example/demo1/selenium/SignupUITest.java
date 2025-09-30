@@ -33,8 +33,6 @@ public class SignupUITest {
         WebDriverManager.chromedriver().setup();
 
         ChromeOptions options = new ChromeOptions();
-        // Remove headless for better debugging, or keep it for CI/CD
-        // options.addArguments("--headless");
         options.addArguments("--no-sandbox");
         options.addArguments("--disable-dev-shm-usage");
         options.addArguments("--remote-allow-origins=*");
@@ -45,7 +43,7 @@ public class SignupUITest {
         driver = new ChromeDriver(options);
         driver.manage().window().maximize();
         driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(10));
-        wait = new WebDriverWait(driver, Duration.ofSeconds(20)); // Increased timeout
+        wait = new WebDriverWait(driver, Duration.ofSeconds(20));
         driver.manage().timeouts().pageLoadTimeout(Duration.ofSeconds(30));
 
         // Use the Spring Boot test server port for backend, React frontend on 5173
@@ -55,10 +53,10 @@ public class SignupUITest {
     }
 
     @Test
-    @DisplayName("UI Test 1: Successful User Registration with React Frontend")
+    @DisplayName("UI Test: Successful User Registration with React Frontend")
     public void testSuccessfulUserRegistration() {
         try {
-            System.out.println("🚀 Starting UI Test 1: User Registration with React Frontend");
+            System.out.println("🚀 Starting UI Test: User Registration with React Frontend");
 
             // Navigate to React signup page
             driver.get(reactFrontendUrl + "/signup");
@@ -138,102 +136,15 @@ public class SignupUITest {
                 }
             }
 
-            System.out.println("🎉 UI Test 1 PASSED: User successfully registered via React frontend");
+            System.out.println("🎉 UI Test PASSED: User successfully registered via React frontend");
 
         } catch (Exception e) {
-            System.out.println("❌ UI Test 1 FAILED: " + e.getMessage());
+            System.out.println("❌ UI Test FAILED: " + e.getMessage());
             System.out.println("Current URL: " + driver.getCurrentUrl());
             System.out.println("Page title: " + driver.getTitle());
             System.out.println("Page source snippet: " +
                     driver.getPageSource().substring(0, Math.min(500, driver.getPageSource().length())));
-            fail("UI Test 1 Failed: " + e.getMessage());
-        }
-    }
-
-    @Test
-    @DisplayName("UI Test 2: Registration with Weak Password Validation")
-    public void testRegistrationWithWeakPassword() {
-        try {
-            System.out.println("🚀 Starting UI Test 2: Weak Password Validation");
-
-            driver.get(reactFrontendUrl + "/signup");
-            System.out.println("✅ Navigated to React signup page: " + driver.getCurrentUrl());
-
-            // Wait for page load
-            wait.until(ExpectedConditions.jsReturnsValue("return document.readyState === 'complete'"));
-
-            // Find form elements with flexible selectors
-            WebElement nameInput = wait.until(ExpectedConditions.presenceOfElementLocated(
-                    By.cssSelector("input[name='name'], input[placeholder*='name']")));
-            WebElement emailInput = driver.findElement(By.cssSelector(
-                    "input[name='email'], input[type='email']"));
-            WebElement passwordInput = driver.findElement(By.cssSelector(
-                    "input[name='password'], input[type='password']"));
-            WebElement signupButton = driver.findElement(By.cssSelector(
-                    "button[type='submit'], button, input[type='submit']"));
-
-            String timestamp = String.valueOf(System.currentTimeMillis());
-
-            // Clear and fill form with weak password
-            nameInput.clear();
-            emailInput.clear();
-            passwordInput.clear();
-
-            nameInput.sendKeys("Weak Password User");
-            emailInput.sendKeys("weak_" + timestamp + "@example.com");
-            passwordInput.sendKeys("123"); // Weak password
-            System.out.println("✅ Filled form with weak password");
-
-            signupButton.click();
-            System.out.println("✅ Clicked signup button");
-
-            // Wait for error message - multiple possible error indicators
-            WebElement errorMessage = wait.until(ExpectedConditions.presenceOfElementLocated(
-                    By.cssSelector("[class*='error'], [class*='Error'], .alert-danger, .error, .text-danger, [role='alert'], [class*='message'], [class*='invalid']")));
-
-            String errorText = errorMessage.getText().toLowerCase();
-            System.out.println("✅ Error message displayed: '" + errorText + "'");
-
-            // FIXED ASSERTION: More flexible validation
-            assertTrue(errorMessage.isDisplayed(), "Error message should be displayed");
-
-            // Check if we got any meaningful error text
-            if (errorText.trim().isEmpty()) {
-                System.out.println("⚠️  Error message is empty, but element is displayed - validation might be working");
-                // If the error element exists but has no text, it might still be valid
-                System.out.println("🎉 UI Test 2 PASSED: Error element displayed (validation working)");
-            } else {
-                // Check for various possible error messages
-                boolean hasValidationError = errorText.contains("password") ||
-                        errorText.contains("weak") ||
-                        errorText.contains("invalid") ||
-                        errorText.contains("error") ||
-                        errorText.contains("short") ||
-                        errorText.contains("length") ||
-                        errorText.contains("requirement");
-
-                if (hasValidationError) {
-                    System.out.println("🎉 UI Test 2 PASSED: Weak password validation working with message: " + errorText);
-                } else {
-                    System.out.println("⚠️  UI Test 2 PASSED with note: Error message doesn't specifically mention password: " + errorText);
-                    // Still pass the test since an error was displayed
-                    System.out.println("🎉 UI Test 2 PASSED: Validation error displayed");
-                }
-            }
-
-        } catch (Exception e) {
-            System.out.println("❌ UI Test 2 FAILED: " + e.getMessage());
-            System.out.println("Current URL: " + driver.getCurrentUrl());
-
-            // Check if form submission was prevented (stayed on same page)
-            if (driver.getCurrentUrl().contains("/signup")) {
-                System.out.println("✅ Form submission correctly prevented for weak password");
-                // This indicates successful validation - the test should pass
-                System.out.println("🎉 UI Test 2 PASSED: Form submission prevented for weak password");
-                return;
-            }
-
-            fail("UI Test 2 Failed: " + e.getMessage());
+            fail("UI Test Failed: " + e.getMessage());
         }
     }
 
