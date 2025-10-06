@@ -1,4 +1,4 @@
-name: Java CI/CD Pipeline
+name: Java CI/CD Pipeline with SonarQube
 
 on:
   push:
@@ -15,7 +15,7 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: root
+          MYSQL_ROOT_PASSWORD: Sanduni2001#
           MYSQL_DATABASE: demodb
         ports:
           - 3306:3306
@@ -55,13 +55,42 @@ jobs:
         run: |
           sudo apt-get install -y mysql-client
           for i in {1..30}; do
-            mysql -h 127.0.0.1 -P 3306 -uroot -proot -e "SELECT 1;" && break
+            mysql -h 127.0.0.1 -P 3306 -uroot -p"Sanduni2001#" -e "SELECT 1;" && break
             echo "Waiting for MySQL... attempt $i"
             sleep 3
           done
 
       - name: Build with Maven
         run: mvn clean compile -DskipTests
+
+      # ============ RUN TESTS WITH COVERAGE ============
+      - name: Run Tests with Coverage
+        run: |
+          mvn clean test jacoco:report
+        env:
+          SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/demodb
+          SPRING_DATASOURCE_USERNAME: root
+          SPRING_DATASOURCE_PASSWORD: Sanduni2001#
+          CI: "true"
+          FRONTEND_URL: "http://localhost:5173"
+          webdriver.chrome.driver: /usr/local/bin/chromedriver
+          webdriver.chrome.logfile: /tmp/chromedriver.log
+
+      # ============ SONARQUBE ANALYSIS AFTER TESTS ============
+      - name: SonarQube Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn sonar:sonar \
+            -Dsonar.projectKey=SanduSewwandi_demo1 \
+            -Dsonar.organization=sandusewwandi \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.java.coveragePlugin=jacoco \
+            -Dsonar.dynamicAnalysis=reuseReports \
+            -Dsonar.language=java \
+            -Dsonar.sourceEncoding=UTF-8
+        continue-on-error: true
 
       - name: Start Spring Boot Application in Background
         run: |
@@ -100,37 +129,18 @@ jobs:
           done
           echo "Frontend is ready"
 
-      - name: Run Unit Tests with Retry
+      - name: Integration Tests (if any)
         run: |
-          # Run tests with retry logic for flaky tests
-          MAX_RETRIES=2
-          ATTEMPT=0
-          while [ $ATTEMPT -le $MAX_RETRIES ]; do
-            echo "Running tests (Attempt $((ATTEMPT+1)))"
-            mvn test -Dmaven.test.failure.ignore=true
-            if [ $? -eq 0 ]; then
-              echo "Tests passed on attempt $((ATTEMPT+1))"
-              break
-            else
-              ATTEMPT=$((ATTEMPT+1))
-              if [ $ATTEMPT -le $MAX_RETRIES ]; then
-                echo "Tests failed, retrying in 5 seconds..."
-                sleep 5
-              else
-                echo "Tests failed after $MAX_RETRIES attempts"
-                exit 1
-              fi
-            fi
-          done
+          # Run any additional integration tests here if needed
+          echo "Running integration tests..."
+          # mvn verify -DskipUnitTests=true (if you have separate integration tests)
         env:
           SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/demodb
           SPRING_DATASOURCE_USERNAME: root
           SPRING_DATASOURCE_PASSWORD: Sanduni2001#
           CI: "true"
           FRONTEND_URL: "http://localhost:5173"
-          # Selenium specific environment variables
           webdriver.chrome.driver: /usr/local/bin/chromedriver
-          webdriver.chrome.logfile: /tmp/chromedriver.log
 
       - name: Show Test Results on Failure
         if: failure()
@@ -187,3 +197,12 @@ jobs:
           name: spring-boot-app
           path: target/*.jar
           retention-days: 7
+
+      - name: Upload Coverage Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-reports
+          path: |
+            target/site/jacoco/**
+          retention-days: 30
