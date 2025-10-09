@@ -9,6 +9,7 @@ import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 import org.springframework.boot.test.context.SpringBootTest;
 import java.time.Duration;
+import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -23,15 +24,27 @@ public class LoginUITest {
         WebDriverManager.chromedriver().setup();
 
         ChromeOptions options = new ChromeOptions();
-        options.addArguments("--no-sandbox");
-        options.addArguments("--disable-dev-shm-usage");
-        options.addArguments("--window-size=1920,1080");
-        options.addArguments("--remote-allow-origins=*");
+
+        // ADD THIS: Unique user data directory for each test session
+        String userDataDir = System.getProperty("java.io.tmpdir") + "chrome_profile_" +
+                UUID.randomUUID().toString().substring(0, 8);
+
+        options.addArguments(
+                "--user-data-dir=" + userDataDir,  // CRITICAL: Unique directory
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--window-size=1920,1080",
+                "--remote-allow-origins=*",
+                "--disable-blink-features=AutomationControlled", // Optional: avoid detection
+                "--disable-extensions" // Optional: disable extensions that might interfere
+        );
 
         driver = new ChromeDriver(options);
         driver.manage().window().maximize();
         driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(10));
         wait = new WebDriverWait(driver, Duration.ofSeconds(20));
+
+        System.out.println("✅ WebDriver initialized with unique profile: " + userDataDir);
     }
 
     @Test

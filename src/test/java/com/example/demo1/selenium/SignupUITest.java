@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
 import java.time.Duration;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -33,12 +34,21 @@ public class SignupUITest {
         WebDriverManager.chromedriver().setup();
 
         ChromeOptions options = new ChromeOptions();
-        options.addArguments("--no-sandbox");
-        options.addArguments("--disable-dev-shm-usage");
-        options.addArguments("--remote-allow-origins=*");
-        options.addArguments("--disable-gpu");
-        options.addArguments("--window-size=1920,1080");
-        options.addArguments("--disable-extensions");
+
+        // ADD THIS: Unique user data directory for each test session
+        String userDataDir = System.getProperty("java.io.tmpdir") + "chrome_profile_" +
+                UUID.randomUUID().toString().substring(0, 8);
+
+        options.addArguments(
+                "--user-data-dir=" + userDataDir,  // CRITICAL: Unique directory
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--remote-allow-origins=*",
+                "--disable-gpu",
+                "--window-size=1920,1080",
+                "--disable-extensions",
+                "--disable-blink-features=AutomationControlled" // Optional: avoid detection
+        );
 
         driver = new ChromeDriver(options);
         driver.manage().window().maximize();
@@ -49,7 +59,7 @@ public class SignupUITest {
         // Use the Spring Boot test server port for backend, React frontend on 5173
         reactFrontendUrl = "http://localhost:5173";
 
-        System.out.println("✅ WebDriver initialized - Backend port: " + port + ", Frontend: " + reactFrontendUrl);
+        System.out.println("✅ WebDriver initialized with unique profile - Backend port: " + port + ", Frontend: " + reactFrontendUrl);
     }
 
     @Test
