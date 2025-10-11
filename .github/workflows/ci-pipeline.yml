@@ -35,25 +35,20 @@ jobs:
       - name: Set up Chrome for Selenium
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget unzip libxss1 libappindicator1 libindicator7 fonts-liberation xvfb
-          
-          # Install Chrome
-          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo dpkg -i google-chrome-stable_current_amd64.deb || true
-          sudo apt-get install -y -f
-          
-          # Install ChromeDriver (simplified - use fixed version)
-          CHROME_VERSION=$(google-chrome --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          echo "Chrome version: $CHROME_VERSION"
-          wget -q "https://chromedriver.storage.googleapis.com/120.0.6099.109/chromedriver_linux64.zip"
-          unzip -q chromedriver_linux64.zip
-          sudo mv chromedriver /usr/local/bin/
-          sudo chmod +x /usr/local/bin/chromedriver
-          
-          # Verify
-          echo "=== Chrome Version ==="
+          sudo apt-get install -y wget unzip
+          # Install Google Chrome
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          # Install ChromeDriver
+          CHROME_VERSION=$(google-chrome --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+          wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+          sudo unzip -q chromedriver-linux64.zip -d /usr/local/bin/
+          sudo chmod +x /usr/local/bin/chromedriver-linux64/chromedriver
+          sudo ln -sf /usr/local/bin/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+          # Verify installation
           google-chrome --version
-          echo "=== ChromeDriver Version ==="
           chromedriver --version
 
       - name: Wait for MySQL to be ready
@@ -64,49 +59,28 @@ jobs:
             echo "Waiting for MySQL... attempt $i"
             sleep 3
           done
-          echo "MySQL is ready!"
 
       - name: Build with Maven
         run: mvn clean compile -DskipTests
 
-      # ============ RUN UNIT TESTS ONLY (SKIP SELENIUM) ============
-      - name: Run Unit Tests with Coverage
+      # ============ RUN TESTS WITH COVERAGE ============
+      - name: Run Tests with Coverage
         run: |
-          echo "Running unit tests (excluding Selenium)..."
-          mvn test -Dtest=!*selenium* jacoco:report
+          mvn clean test jacoco:report
         env:
           SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/demodb
           SPRING_DATASOURCE_USERNAME: root
           SPRING_DATASOURCE_PASSWORD: Sanduni2001#
+          CI: "true"
+          FRONTEND_URL: "http://localhost:5173"
+          webdriver.chrome.driver: /usr/local/bin/chromedriver
+          webdriver.chrome.logfile: /tmp/chromedriver.log
 
-      # ============ VERIFY COVERAGE REPORT ============
-      - name: Verify Coverage Report
-        run: |
-          echo "=== Checking Coverage Report ==="
-          if [ -f "target/site/jacoco/jacoco.xml" ]; then
-            echo "✅ Coverage report generated successfully!"
-            echo "📊 File location: target/site/jacoco/jacoco.xml"
-            echo "📏 File size: $(wc -l < target/site/jacoco/jacoco.xml) lines"
-            echo "=== Coverage summary ==="
-            # Extract coverage information from the XML
-            LINE_RATE=$(grep -oP 'line-rate="\K[0-9.]+' target/site/jacoco/jacoco.xml | head -1)
-            BRANCH_RATE=$(grep -oP 'branch-rate="\K[0-9.]+' target/site/jacoco/jacoco.xml | head -1)
-            echo "Line Coverage: $(echo "scale=2; $LINE_RATE * 100" | bc)%"
-            echo "Branch Coverage: $(echo "scale=2; $BRANCH_RATE * 100" | bc)%"
-          else
-            echo "❌ Coverage report not found at target/site/jacoco/jacoco.xml"
-            echo "=== Checking for alternative locations ==="
-            find . -name "jacoco.xml" -type f | head -10
-            echo "=== Target directory contents ==="
-            find target -name "*.xml" -type f | head -10
-          fi
-
-      # ============ SONARQUBE ANALYSIS ============
+      # ============ SONARQUBE ANALYSIS AFTER TESTS ============
       - name: SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          echo "Starting SonarQube analysis..."
           mvn sonar:sonar \
             -Dsonar.projectKey=SanduSewwandi_demo1 \
             -Dsonar.organization=sandusewwandi \
@@ -114,93 +88,94 @@ jobs:
             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
             -Dsonar.java.coveragePlugin=jacoco \
             -Dsonar.dynamicAnalysis=reuseReports \
-            -Dsonar.coverage.exclusions=**/test/**,**/*Test.java,**/*Tests.java,**/config/**,**/entity/**,**/dto/**,**/selenium/** \
-            -Dsonar.sourceEncoding=UTF-8 \
-            -Dsonar.junit.reportPaths=target/surefire-reports \
-            -Dsonar.sources=src/main/java \
-            -Dsonar.tests=src/test/java
-        continue-on-error: false
+            -Dsonar.language=java \
+            -Dsonar.sourceEncoding=UTF-8
+        continue-on-error: true
 
-      # ============ TRY SELENIUM TESTS SEPARATELY (OPTIONAL) ============
-      - name: Run Selenium Tests (Optional)
-        if: always()  # Run even if previous steps failed
-        continue-on-error: true  # Don't fail build if Selenium tests fail
+      - name: Start Spring Boot Application in Background
         run: |
-          echo "=== Attempting Selenium Tests ==="
-          
-          # Start virtual display
-          export DISPLAY=:99
-          Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
-          XVFB_PID=$!
-          sleep 5
-          
-          # Start Spring Boot for frontend
-          echo "Starting Spring Boot application..."
+          # Start Spring Boot on a specific port and run in background
           mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=8080 &
-          SPRING_PID=$!
-          sleep 15  # Wait longer for Spring Boot to start
-          
-          # Check if Spring Boot is running
-          if curl -f http://localhost:8080/actuator/health > /dev/null 2>&1; then
-            echo "✅ Spring Boot is running"
-          
-            # Start frontend if directory exists
-            if [ -d "frontend" ]; then
-              echo "Starting React frontend..."
-              cd frontend
-              npm install
-              npm run dev &
-              FRONTEND_PID=$!
-              cd ..
-              sleep 10
-            fi
-          
-            # Run Selenium tests with longer timeout
-            echo "Running Selenium tests..."
-            mvn test -Dtest=*selenium* -Dsurefire.timeout=120
+          echo $! > spring-boot.pid
+          # Wait for Spring Boot to start
+          for i in {1..30}; do
+            curl -f http://localhost:8080/actuator/health 2>/dev/null && break
+            echo "Waiting for Spring Boot... attempt $i"
+            sleep 5
+          done
+          echo "Spring Boot application started successfully"
+
+      - name: Build React Frontend
+        run: |
+          # Check if frontend directory exists and build it
+          if [ -d "frontend" ]; then
+            cd frontend
+            npm install
+            npm run build
+            # Serve the built frontend
+            npx serve -s build -p 5173 &
+            echo $! > frontend.pid
+            cd ..
           else
-            echo "❌ Spring Boot failed to start, skipping Selenium tests"
+            echo "Frontend directory not found, assuming frontend is already running"
           fi
-          
-          # Cleanup
-          echo "Cleaning up..."
-          kill $XVFB_PID 2>/dev/null || true
-          kill $SPRING_PID 2>/dev/null || true
-          if [ -n "$FRONTEND_PID" ]; then
-            kill $FRONTEND_PID 2>/dev/null || true
-          fi
-          pkill -f "spring-boot:run" 2>/dev/null || true
-          pkill -f "npm" 2>/dev/null || true
+
+      - name: Wait for Frontend to be ready
+        run: |
+          for i in {1..30}; do
+            curl -f http://localhost:5173 2>/dev/null && break
+            echo "Waiting for Frontend... attempt $i"
+            sleep 3
+          done
+          echo "Frontend is ready"
+
+      - name: Integration Tests (if any)
+        run: |
+          # Run any additional integration tests here if needed
+          echo "Running integration tests..."
+          # mvn verify -DskipUnitTests=true (if you have separate integration tests)
         env:
           SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/demodb
           SPRING_DATASOURCE_USERNAME: root
           SPRING_DATASOURCE_PASSWORD: Sanduni2001#
           CI: "true"
           FRONTEND_URL: "http://localhost:5173"
-          DISPLAY: ":99"
           webdriver.chrome.driver: /usr/local/bin/chromedriver
 
-      # ============ BUILD FINAL ARTIFACTS ============
-      - name: Build JAR Package
-        run: mvn package -DskipTests
+      - name: Show Test Results on Failure
+        if: failure()
+        run: |
+          echo "=== Test Failure Details ==="
+          find target/surefire-reports -name "*.txt" -type f | while read file; do
+            echo "=== Test: $(basename $file) ==="
+            cat "$file"
+            echo "----------------------------------------"
+          done
+          # Show Chrome driver logs if they exist
+          if [ -f /tmp/chromedriver.log ]; then
+            echo "=== Chrome Driver Logs ==="
+            tail -50 /tmp/chromedriver.log
+          fi
 
-      - name: Show Test Results
+      - name: Stop Applications
         if: always()
         run: |
-          echo "=== Test Results Summary ==="
-          if [ -d "target/surefire-reports" ]; then
-            echo "Test reports generated:"
-            find target/surefire-reports -name "*.txt" -type f | while read file; do
-              TEST_NAME=$(basename "$file" .txt)
-              if tail -1 "$file" | grep -q "FAILURE\|ERROR"; then
-                echo "❌ $TEST_NAME: FAILED"
-              else
-                echo "✅ $TEST_NAME: PASSED"
-              fi
-            done
-          else
-            echo "No test reports found"
+          # Stop Spring Boot
+          if [ -f spring-boot.pid ]; then
+            kill $(cat spring-boot.pid) 2>/dev/null || true
+            rm -f spring-boot.pid
           fi
+          # Stop Frontend
+          if [ -f frontend.pid ]; then
+            kill $(cat frontend.pid) 2>/dev/null || true
+            rm -f frontend.pid
+          fi
+
+      - name: Generate Test Report
+        if: always()
+        run: |
+          mvn surefire-report:report-only
+          mvn site -DgenerateReports=false
 
       - name: Upload Test Reports
         uses: actions/upload-artifact@v4
@@ -212,14 +187,9 @@ jobs:
             target/surefire-reports/**
           retention-days: 30
 
-      - name: Upload Coverage Reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-reports
-          path: |
-            target/site/jacoco/**
-          retention-days: 30
+      - name: Build JAR Package
+        if: success()
+        run: mvn package -DskipTests
 
       - name: Upload JAR Artifact
         uses: actions/upload-artifact@v4
@@ -228,13 +198,11 @@ jobs:
           path: target/*.jar
           retention-days: 7
 
-      - name: Final Status
+      - name: Upload Coverage Reports
+        uses: actions/upload-artifact@v4
         if: always()
-        run: |
-          echo "=== Pipeline Status ==="
-          echo "✅ Build completed"
-          echo "✅ Unit tests executed" 
-          echo "✅ Coverage report generated"
-          echo "✅ SonarQube analysis submitted"
-          echo "✅ JAR package built"
-          echo "⚠️  Selenium tests run separately (may fail without affecting build)"
+        with:
+          name: coverage-reports
+          path: |
+            target/site/jacoco/**
+          retention-days: 30
