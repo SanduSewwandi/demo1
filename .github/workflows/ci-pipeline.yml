@@ -32,24 +32,37 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Set up Chrome for Selenium
+      - name: Set up Chrome for Selenium (FIXED)
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget unzip
-          # Install Google Chrome
-          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          # Install ChromeDriver
+          sudo apt-get install -y wget unzip libxss1 libappindicator1 libindicator7 fonts-liberation xvfb
+          
+          # Install Chrome using direct .deb package (more reliable)
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb || true
+          sudo apt-get install -y -f
+          
+          # Get Chrome version and download matching ChromeDriver
           CHROME_VERSION=$(google-chrome --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
-          wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
-          sudo unzip -q chromedriver-linux64.zip -d /usr/local/bin/
-          sudo chmod +x /usr/local/bin/chromedriver-linux64/chromedriver
-          sudo ln -sf /usr/local/bin/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
-          # Verify installation
+          echo "Chrome version: $CHROME_VERSION"
+          
+          # Download ChromeDriver from Chrome for Testing
+          wget -q "https://storage.googleapis.com/chrome-for-testing-public/$CHROME_VERSION/linux64/chromedriver-linux64.zip"
+          unzip -q chromedriver-linux64.zip
+          sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
+          sudo chmod +x /usr/local/bin/chromedriver
+          
+          # Clean up
+          rm -f google-chrome-stable_current_amd64.deb
+          rm -rf chromedriver-linux64*
+          
+          # Verify installations
+          echo "=== Chrome Version ==="
           google-chrome --version
+          echo "=== ChromeDriver Version ==="
           chromedriver --version
+          echo "=== ChromeDriver Path ==="
+          which chromedriver
 
       - name: Wait for MySQL to be ready
         run: |
@@ -63,10 +76,19 @@ jobs:
       - name: Build with Maven
         run: mvn clean compile -DskipTests
 
-      # ============ RUN TESTS WITH COVERAGE ============
+      # ============ RUN TESTS WITH COVERAGE (FIXED) ============
       - name: Run Tests with Coverage
         run: |
+          # Start virtual display for headless browser testing
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
+          XVFB_PID=$!
+          
+          echo "Starting tests with virtual display..."
           mvn clean test jacoco:report
+          
+          # Stop virtual display
+          kill $XVFB_PID 2>/dev/null || true
         env:
           SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/demodb
           SPRING_DATASOURCE_USERNAME: root
@@ -75,8 +97,25 @@ jobs:
           FRONTEND_URL: "http://localhost:5173"
           webdriver.chrome.driver: /usr/local/bin/chromedriver
           webdriver.chrome.logfile: /tmp/chromedriver.log
+          DISPLAY: ":99"
 
-      # ============ SONARQUBE ANALYSIS AFTER TESTS ============
+      # ============ VERIFY COVERAGE REPORT ============
+      - name: Verify Coverage Report
+        run: |
+          echo "=== Checking Coverage Report ==="
+          if [ -f "target/site/jacoco/jacoco.xml" ]; then
+            echo "✅ Coverage report generated successfully!"
+            echo "📊 File location: target/site/jacoco/jacoco.xml"
+            echo "📏 File size: $(wc -l < target/site/jacoco/jacoco.xml) lines"
+            echo "=== First 5 lines of coverage report ==="
+            head -5 target/site/jacoco/jacoco.xml
+          else
+            echo "❌ Coverage report not found at target/site/jacoco/jacoco.xml"
+            echo "=== Checking target directory structure ==="
+            find target -name "*.xml" -type f | head -10
+          fi
+
+      # ============ SONARQUBE ANALYSIS (IMPROVED) ============
       - name: SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -86,11 +125,15 @@ jobs:
             -Dsonar.organization=sandusewwandi \
             -Dsonar.host.url=https://sonarcloud.io \
             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
             -Dsonar.java.coveragePlugin=jacoco \
             -Dsonar.dynamicAnalysis=reuseReports \
-            -Dsonar.language=java \
-            -Dsonar.sourceEncoding=UTF-8
-        continue-on-error: true
+            -Dsonar.coverage.exclusions=**/test/**,**/*Test.java,**/*Tests.java,**/config/**,**/entity/**,**/dto/** \
+            -Dsonar.test.inclusions=**/*Test.java,**/*Tests.java \
+            -Dsonar.sourceEncoding=UTF-8 \
+            -Dsonar.junit.reportPaths=target/surefire-reports \
+            -Dsonar.sources=src/main/java \
+            -Dsonar.tests=src/test/java
 
       - name: Start Spring Boot Application in Background
         run: |
@@ -117,17 +160,21 @@ jobs:
             echo $! > frontend.pid
             cd ..
           else
-            echo "Frontend directory not found, assuming frontend is already running"
+            echo "Frontend directory not found, skipping frontend build"
           fi
 
       - name: Wait for Frontend to be ready
         run: |
-          for i in {1..30}; do
-            curl -f http://localhost:5173 2>/dev/null && break
-            echo "Waiting for Frontend... attempt $i"
-            sleep 3
-          done
-          echo "Frontend is ready"
+          if [ -d "frontend" ]; then
+            for i in {1..30}; do
+              curl -f http://localhost:5173 2>/dev/null && break
+              echo "Waiting for Frontend... attempt $i"
+              sleep 3
+            done
+            echo "Frontend is ready"
+          else
+            echo "No frontend directory, skipping frontend wait"
+          fi
 
       - name: Integration Tests (if any)
         run: |
@@ -154,8 +201,11 @@ jobs:
           # Show Chrome driver logs if they exist
           if [ -f /tmp/chromedriver.log ]; then
             echo "=== Chrome Driver Logs ==="
-            tail -50 /tmp/chromedriver.log
+            cat /tmp/chromedriver.log
           fi
+          # Show Xvfb logs if they exist
+          echo "=== Current Processes ==="
+          ps aux | grep -E "(chrome|Xvfb)" || true
 
       - name: Stop Applications
         if: always()
@@ -170,6 +220,10 @@ jobs:
             kill $(cat frontend.pid) 2>/dev/null || true
             rm -f frontend.pid
           fi
+          # Clean up any remaining processes
+          pkill -f "spring-boot:run" 2>/dev/null || true
+          pkill -f "serve -s" 2>/dev/null || true
+          pkill -f "Xvfb" 2>/dev/null || true
 
       - name: Generate Test Report
         if: always()
